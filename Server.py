@@ -2,6 +2,7 @@ import socket
 import random
 import CCBEncrypt
 from time import time
+from collections import Counter
 from Client import tcp_client
 from DataLoad import rewrite_account_list,rewrite_transaction,read_transaction_payer,add_node
 
@@ -53,32 +54,48 @@ def exm_tran_valid(account_hash, signiture, data):
     return 'ok'
 
 def lc_strategy(sign):
-    with transaction_lock:
-        return 1 if lc_transaction_pass.get(sign, False) else 0
+    with account_lock,transaction_lock:
+        msg=f"{account_list[sign.split('|')[0]][0]}:{account_list[sign.split('|')[1]][0]}"
+        return f"1:{msg}" if lc_transaction_pass.get(sign, True) else f"0:{msg}"
         # 对于其他节点共享投票结果的请求
         # 返回本地节点的投票结果
+
+def get_sorted_elements(arr):
+    #只返回按重复次数排序的元素列表
+    counter = Counter(arr)
+    # 按出现次数排序，只返回元素
+    sorted_elements = [item for item, count in counter.most_common()]
+    return sorted_elements
 
 def vote_transaction(sign):
     # 交易状态锁
     with transaction_lock:
         if sign not in lc_transaction_pass:
             return 'transaction-not-found'
-        current_votes = tran_vote_ratio.get(sign, 0)
+    req_balance1=[]
+    req_balance2=[]
+    current_votes = tran_vote_ratio.get(sign, 0)
     # 向所有节点发起共享投票结果的请求
     for node in node_list:
         recv = tcp_client(node[0], node[1], f"VOTE_TRAN:{sign}")
-        if recv[0] == 'ok' and recv[1] == 1:
+        if recv[0] == 'ok' and recv[1].split('|')[0] == '1':
             current_votes += 1
+            req_balance1.append(float(recv[1].split('|')[1]))
+            req_balance2.append(float(recv[1].split('|')[2]))
     # 最终更新时需要同时保护账户和交易状态
     with account_lock, transaction_lock:  # 同时获取两个锁
         # 如果投票支持率超过2/3，则更改存储于本地的账本信息，无论自己是否支持，少数服从多数
+        # 投票同时各节点共享交易方和接受方的余额数据
+        # 以余额数据的众数作为真实余额
         if current_votes / len(node_list) >= 2/3:
             pay_msg = sign.split('|')
             account_hash = pay_msg[0]
+            common_balance1=get_sorted_elements(req_balance1)[0]
+            common_balance2=get_sorted_elements(req_balance2)[0]
             # 更新账户信息
             account_list[account_hash][2] = pay_msg[4]  # 更新nonce（最近的历史订单号）
-            account_list[account_hash][0] = float(account_list[account_hash][0]) - float(pay_msg[2])
-            account_list[pay_msg[1]][0] = float(account_list[pay_msg[1]][0]) + float(pay_msg[2])
+            account_list[account_hash][0] = common_balance1 - float(pay_msg[2])
+            account_list[pay_msg[1]][0] = common_balance2 + float(pay_msg[2])
             # 修改本地文件
             rewrite_account_list(account_list)
             rewrite_transaction(account_hash, pay_msg[1], pay_msg[2], pay_msg[3], pay_msg[4])
