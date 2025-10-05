@@ -22,7 +22,7 @@ def load_node_list():
 def add_node(addr,port):
     with open(node_file_path,"a") as handle:
         portalocker.lock(handle, portalocker.LOCK_EX)
-        handle.write(f"{addr} {port}")
+        handle.write(f"{addr} {port}\n")
 
 # 加载本地储存的用户信息列表文件
 # 每一行的内容格式都为:[用户哈希] [该用户持有的CC币] [该用户的公钥] [该用户已进行多少次交易]
@@ -72,4 +72,5 @@ def rewrite_account_list(account_list):
         new_text += f"{account_hash} {account_list[account_hash][0]} {account_list[account_hash][1]} {account_list[account_hash][2]}\n"
     with open(account_file_path, 'w') as f:
         portalocker.lock(f, portalocker.LOCK_EX)
+
         f.write(new_text)
